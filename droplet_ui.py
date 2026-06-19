@@ -454,6 +454,37 @@ def launch_ui():
         background: #2a2a2a !important;
         color: #cccccc !important;
     }}
+    /* ── Tab styling — covers legacy (p-) and modern (lm-/widget-tab) names ── */
+    .{_uid} .p-TabBar,
+    .{_uid} .lm-TabBar,
+    .{_uid} .jupyter-widgets-tab-bar
+        {{ background: #1a1a1a !important; border-bottom: 1px solid #444 !important; }}
+    .{_uid} .p-TabBar-tab,
+    .{_uid} .lm-TabBar-tab
+        {{ background: #2a2a2a !important; color: #aaa !important;
+           border-color: #444 !important; border-bottom: none !important; }}
+    .{_uid} .p-TabBar-tab.p-mod-current,
+    .{_uid} .lm-TabBar-tab.lm-mod-current,
+    .{_uid} .p-TabBar-tab[aria-selected="true"]
+        {{ background: #1a1a1a !important; color: #fff !important;
+           border-top: 2px solid #4a90d9 !important; }}
+    .{_uid} .p-TabPanel,
+    .{_uid} .lm-TabPanel,
+    .{_uid} .p-StackedPanel,
+    .{_uid} .lm-StackedPanel
+        {{ background: #1a1a1a !important; border: 1px solid #444 !important;
+           border-top: none !important; }}
+    .{_uid} .widget-tab-bar
+        {{ background: #1a1a1a !important; }}
+    .{_uid} .widget-tab-bar .widget-tab
+        {{ background: #2a2a2a !important; color: #aaa !important;
+           border: 1px solid #444 !important; border-bottom: none !important; }}
+    .{_uid} .widget-tab-bar .widget-tab.mod-active,
+    .{_uid} .widget-tab-bar .widget-tab[aria-selected="true"]
+        {{ background: #1a1a1a !important; color: #fff !important;
+           border-top: 2px solid #4a90d9 !important; }}
+    .{_uid} .widget-tab-contents
+        {{ background: #1a1a1a !important; border: 1px solid #444 !important; }}
     </style>
     """))
 
@@ -723,6 +754,8 @@ def launch_ui():
                layout=widgets.Layout(width="265px"))
     sigma_sl   = widgets.FloatSlider(value=1.0, min=0.3, max=5.0, step=0.1,
                                       description="σ blur",         **_sl)
+    otsu_sl    = widgets.FloatSlider(value=1.0, min=0.3, max=1.5, step=0.05,
+                                      description="Otsu scale",     **_sl)
     minsize_sl = widgets.IntSlider(  value=20,  min=5,   max=300, step=5,
                                       description="min area (px²)", **_sl)
     mind_sl    = widgets.IntSlider(  value=5,   min=2,   max=60,  step=1,
@@ -790,6 +823,7 @@ def launch_ui():
                 sigma_override=sigma_sl.value,
                 minsize_override=minsize_sl.value,
                 mind_override=mind_sl.value,
+                otsu_scale=otsu_sl.value,
             )
             # Pass 1: full circle → fit GMM → thresholds
             inten_full  = measure_droplet_intensities(img, centers, radii, meas_frac=1.0)
@@ -1170,24 +1204,27 @@ def launch_ui():
     def _sep():
         return widgets.HTML("<hr style='margin:3px 0'>")
 
+    _tab_pad = widgets.Layout(padding="6px")
+    tab_detect   = widgets.VBox([sigma_sl, otsu_sl, minsize_sl, mind_sl],
+                                 layout=_tab_pad)
+    tab_classify = widgets.VBox([excl_sl, relth_sl, margin_sl, snrth_sl, throff_sl],
+                                 layout=_tab_pad)
+    tab_bright   = widgets.VBox([brcomp_sl, brpct_sl],
+                                 layout=_tab_pad)
+    param_tabs = widgets.Tab(children=[tab_detect, tab_classify, tab_bright])
+    for _i, _t in enumerate(["Detect", "Classify", "Bright-red"]):
+        param_tabs.set_title(_i, _t)
+
     left_col = widgets.VBox([
         file_picker_widget,
         path_input,
         widgets.HBox([mag_dd, pxsz_box]),
         _sep(),
-        _h("DETECTION"),
-        sigma_sl, minsize_sl, mind_sl,
-        _sep(),
-        _h("CLASSIFICATION"),
-        excl_sl, relth_sl,
-        _h("RELIABILITY METRICS"),
-        margin_sl, snrth_sl,
-        _h("BRIGHT-RED"),
-        brcomp_sl, brpct_sl,
+        param_tabs,
         _sep(),
         widgets.HBox([run_btn, reclf_btn, save_btn],
                      layout=widgets.Layout(gap="4px")),
-    ], layout=widgets.Layout(width="288px", padding="8px"))
+    ], layout=widgets.Layout(width="300px", padding="8px"))
 
     right_col = widgets.VBox([
         _h("EDIT DROPLETS"),
@@ -1206,9 +1243,8 @@ def launch_ui():
         _h("Delete"),
         widgets.HBox([del_id_box, del_btn], layout=widgets.Layout(gap="4px")),
         _sep(),
-        _h("CHANNEL THRESHOLDS (override)"),
+        _h("CHANNEL THRESHOLDS (auto; edit to override)"),
         *thresh_sls,
-        throff_sl,
         widgets.HBox([diag_btn, simg_btn], layout=widgets.Layout(gap="4px", margin="4px 0")),
         sana_btn,
     ], layout=widgets.Layout(

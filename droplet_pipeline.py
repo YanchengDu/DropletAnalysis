@@ -16,7 +16,7 @@ from skimage.measure import label as _sk_label, regionprops as _sk_regionprops
 from sklearn.mixture import GaussianMixture
 
 
-# ── 1. Load & normalise ───────────────────────────────────────────────────────
+# -- 1. Load & normalise -------------------------------------------------------
 
 def load_image(filename):
     """Load a CZI file and return a float32 array of shape (n_ch, H, W)."""
@@ -34,14 +34,15 @@ def normalize_image(img):
     return out
 
 
-# ── 2. Detect droplets — union of per-channel masks ──────────────────────────
+# -- 2. Detect droplets -- union of per-channel masks -------------------------
 
 def detect_droplets(norm, pixel_size_um,
                     sigma_override=None,
                     minsize_override=None,
                     mind_override=None,
                     min_circularity=0.0,
-                    border_margin=0):
+                    border_margin=0,
+                    otsu_scale=1.0):
     """Return centers (N,2), radii (N,), distance map (H,W).
 
     Uses a union of per-channel Otsu masks so droplets visible in only one
@@ -66,7 +67,7 @@ def detect_droplets(norm, pixel_size_um,
     ch_masks = []
     for c in range(n_ch):
         sm = filters.gaussian(norm[c], sigma=sigma)
-        t  = filters.threshold_otsu(sm)
+        t  = filters.threshold_otsu(sm) * otsu_scale
         m  = morphology.remove_small_objects(sm > t, max_size=min_size - 1)
         ch_masks.append(m)
     union_mask = np.logical_or.reduce(ch_masks)
@@ -91,7 +92,7 @@ def detect_droplets(norm, pixel_size_um,
     centers = np.array(kept, dtype=int)
     radii   = dist[centers[:, 0], centers[:, 1]]
 
-    # ── Circle-level NMS: suppress smaller circle when it lies inside (or
+    # -- Circle-level NMS: suppress smaller circle when it lies inside (or
     #    substantially overlaps) a larger circle.  The threshold is
     #    radii[i] + 0.5*radii[j]: this handles the common case where the
     #    distance-transform radius of the large droplet slightly underestimates
@@ -118,7 +119,7 @@ def detect_droplets(norm, pixel_size_um,
         centers = centers[~suppress]
         radii   = radii[~suppress]
 
-    # ── Radius filter derived from min_size: r_min = sqrt(min_size / π) ──
+    # -- Radius filter derived from min_size: r_min = sqrt(min_size / pi) --
     # Same threshold as remove_small_objects, expressed as an equivalent
     # circle radius, so one slider controls both mask and detection cutoffs.
     if len(centers) > 0:
@@ -127,7 +128,7 @@ def detect_droplets(norm, pixel_size_um,
         centers = centers[keep]
         radii   = radii[keep]
 
-    # ── Border-margin filter: drop detections near image edges ───────────────
+    # -- Border-margin filter: drop detections near image edges ---------------
     if len(centers) > 0 and border_margin > 0:
         bm = int(border_margin)
         keep = ((centers[:, 0] >= bm) & (centers[:, 0] < H - bm) &
@@ -135,7 +136,7 @@ def detect_droplets(norm, pixel_size_um,
         centers = centers[keep]
         radii   = radii[keep]
 
-    # ── Circularity filter: 4π·area/perimeter² (circle=1, rectangle≈0.79) ───
+    # -- Circularity filter: 4*pi*area/perimeter^2 (circle=1, rectangle~0.79) -
     # Removes scan-boundary lines and tile-edge rectangles that pass the size
     # and NMS filters but whose connected component is clearly non-circular.
     if len(centers) > 0 and min_circularity > 0 and _labeled is not None:
@@ -161,23 +162,23 @@ def detect_droplets(norm, pixel_size_um,
     return centers, radii, dist
 
 
-# ── 3. Per-droplet intensity ──────────────────────────────────────────────────
+# -- 3. Per-droplet intensity --------------------------------------------------
 
 def measure_droplet_intensities(img, centers, radii, meas_frac=1.0):
     """Median raw intensity inside each droplet's Voronoi-clipped circular ROI.
 
     Two contamination sources are removed simultaneously:
     1. Radius shrinkage (meas_frac): the sampling circle is scaled to
-       meas_frac × radius, keeping away from the droplet boundary.
+       meas_frac x radius, keeping away from the droplet boundary.
     2. Voronoi masking: for every pixel inside the circle, only include it
        if this droplet's centre is the nearest centre (KDTree lookup).
-       This eliminates any overlap between adjacent droplets — pixels in
+       This eliminates any overlap between adjacent droplets -- pixels in
        the overlap region are assigned exclusively to whichever droplet is
        closer.
     The median (rather than mean) then handles any residual contamination
     from pixels < 50 % of the masked area.
 
-    meas_frac : fraction of detected radius used for the initial circle (0–1).
+    meas_frac : fraction of detected radius used for the initial circle (0-1).
                 The stored radius and display circle are unaffected.
     """
     from scipy.spatial import KDTree
@@ -219,10 +220,10 @@ def measure_droplet_intensities(img, centers, radii, meas_frac=1.0):
     return intensities
 
 
-# ── 4. Background estimation ──────────────────────────────────────────────────
+# -- 4. Background estimation --------------------------------------------------
 
 def estimate_background(img, centers, radii, pixel_size_um, excl_factor=2.0):
-    """Background pixels are at least excl_factor × droplet-radius away from
+    """Background pixels are at least excl_factor x droplet-radius away from
     every centre, then further dilated to avoid halo contamination."""
     n_ch, H, W = img.shape
     yy, xx = np.mgrid[0:H, 0:W]
@@ -242,7 +243,7 @@ def estimate_background(img, centers, radii, pixel_size_um, excl_factor=2.0):
     return bg_means, bg_stds
 
 
-# ── 5. GMM classification per channel ────────────────────────────────────────
+# -- 5. GMM classification per channel ----------------------------------------
 
 def classify_channels(intensities, bg_means, bg_stds,
                       reliability_sigma=1.0, margin_sigma=0.0,
@@ -254,10 +255,10 @@ def classify_channels(intensities, bg_means, bg_stds,
     ----------
     reliability_sigma : float
         Channel is flagged image-unreliable when the bright-component mean
-        < reliability_sigma × bg_std.
+        < reliability_sigma x bg_std.
     margin_sigma : float
         Per-droplet dead zone.  Droplets whose bg-subtracted intensity is
-        within margin_sigma × bg_std of the threshold are marked -2 (undecided)
+        within margin_sigma x bg_std of the threshold are marked -2 (undecided)
         instead of 0/1.  Set to 0 (default) to disable.
     thresh_offset_sigma : float
         Shift the GMM threshold upward by this many bg_std units before
@@ -270,11 +271,11 @@ def classify_channels(intensities, bg_means, bg_stds,
 
     Returns
     -------
-    binary     : (N, n_ch) int   — values: 1=bright, 0=dark,
+    binary     : (N, n_ch) int   -- values: 1=bright, 0=dark,
                                            -2=undecided (near threshold)
     thresholds : (n_ch,) float
-    reliable   : (n_ch,) bool    — False when GMM fails for whole image
-    posteriors : (N, n_ch) float — P(bright | intensity); NaN for unreliable ch
+    reliable   : (n_ch,) bool    -- False when GMM fails for whole image
+    posteriors : (N, n_ch) float -- P(bright | intensity); NaN for unreliable ch
     """
     n_ch   = intensities.shape[1]
     bg_sub = intensities - bg_means
@@ -289,7 +290,7 @@ def classify_channels(intensities, bg_means, bg_stds,
             reliable[c] = False
             continue
 
-        # ── Manual threshold override: skip GMM ───────────────────────────
+        # -- Manual threshold override: skip GMM ------------------------------
         man = None if manual_thresholds is None else manual_thresholds[c]
         if man is not None:
             thresh = float(man)
@@ -319,14 +320,14 @@ def classify_channels(intensities, bg_means, bg_stds,
             thresholds[c] = thresh
             binary[:, c]  = (vals > thresh).astype(int)
 
-            # ── GMM posteriors (B metric) ─────────────────────────────────
+            # -- GMM posteriors (B metric) -------------------------------------
             proba = gmm.predict_proba(vals.reshape(-1, 1))   # (N, 2)
             posteriors[:, c] = proba[:, order[1]]             # P(bright component)
 
             if m1 < reliability_sigma * bg_stds[c]:
                 reliable[c] = False
 
-        # ── Dead-zone / undecided (decision-boundary sensitivity) ─────────
+        # -- Dead-zone / undecided (decision-boundary sensitivity) ------------
         if margin_sigma > 0:
             dead = np.abs(vals - thresh) < margin_sigma * bg_stds[c]
             binary[dead, c] = -2
@@ -334,22 +335,22 @@ def classify_channels(intensities, bg_means, bg_stds,
     return binary, thresholds, reliable, posteriors
 
 
-# ── 6. Bright-red detection ───────────────────────────────────────────────────
+# -- 6. Bright-red detection ---------------------------------------------------
 
 def detect_bright_red(intensities, bg_means, bg_stds, red_ch=0,
                       bright_factor=2.0, bright_pct=98.0, dom_factor=1.5):
     """3-component GMM on the red channel to separate negative / dim-red /
     bright-red.  A droplet is labelled bright-red only when:
       1. Its red bg-subtracted intensity is in the GMM bright-red component
-         (bright-component mean > bright_factor × dim-component mean), AND
-      2. Red is DOMINANT: red_bgsub > dom_factor × max(other channels bgsub).
+         (bright-component mean > bright_factor x dim-component mean), AND
+      2. Red is DOMINANT: red_bgsub > dom_factor x max(other channels bgsub).
          This prevents bright droplets with signal in all channels from being
          mis-labelled as bright-red.
 
     Parameters
     ----------
     dom_factor : float
-        Dominance threshold.  Red must exceed dom_factor × the largest of the
+        Dominance threshold.  Red must exceed dom_factor x the largest of the
         other three channels (bg-subtracted).  Default 1.5.
     """
     n_ch = intensities.shape[1]
@@ -357,7 +358,7 @@ def detect_bright_red(intensities, bg_means, bg_stds, red_ch=0,
     red_vals = bg_sub[:, red_ch]
     other_chs = [c for c in range(n_ch) if c != red_ch]
 
-    # ── GMM classification on red channel ─────────────────────────────────
+    # -- GMM classification on red channel ------------------------------------
     vals = red_vals.reshape(-1, 1)
     vals = red_vals.reshape(-1, 1)
     gmm3    = GaussianMixture(n_components=3, random_state=0,
@@ -376,7 +377,7 @@ def detect_bright_red(intensities, bg_means, bg_stds, red_ch=0,
         gmm_bright = ((red_vals > threshold) &
                       (red_vals > bright_factor * dim_mean))
 
-    # ── Dominance check: red must exceed all other channels ───────────────
+    # -- Dominance check: red must exceed all other channels ------------------
     if len(other_chs) > 0 and dom_factor > 0:
         max_other  = bg_sub[:, other_chs].max(axis=1)
         red_dominant = red_vals > dom_factor * max_other
@@ -386,7 +387,7 @@ def detect_bright_red(intensities, bg_means, bg_stds, red_ch=0,
     return gmm_bright & red_dominant
 
 
-# ── 7. Assemble dataframe ─────────────────────────────────────────────────────
+# -- 7. Assemble dataframe -----------------------------------------------------
 
 def build_dataframe(centers, radii, intensities, binary, bright_red,
                     reliable, pixel_size_um,
@@ -395,15 +396,15 @@ def build_dataframe(centers, radii, intensities, binary, bright_red,
     """Build a tidy DataFrame of one row per droplet.
 
     New optional columns (when bg_means/bg_stds/posteriors are supplied):
-      snr_ch1..4   — (intensity – bg_mean) / bg_std  per channel  [metric A]
-      min_snr      — minimum SNR across all channels
-      snr_reliable — True when min_snr ≥ snr_threshold
-      posterior_ch1..4 — P(bright) from GMM               [metric B]
-      min_confidence   — min |posterior – 0.5| (0=most ambiguous, 0.5=certain)
-      size_reliable    — True when radius ≥ 3 px           [metric C]
-      undecided        — True when any channel is coded -2
+      snr_ch1..4   -- (intensity - bg_mean) / bg_std  per channel  [metric A]
+      min_snr      -- minimum SNR across all channels
+      snr_reliable -- True when min_snr >= snr_threshold
+      posterior_ch1..4 -- P(bright) from GMM               [metric B]
+      min_confidence   -- min |posterior - 0.5| (0=most ambiguous, 0.5=certain)
+      size_reliable    -- True when radius >= 3 px           [metric C]
+      undecided        -- True when any channel is coded -2
     """
-    # ── code_int: treat undecided (-2) bits as 0 for bitmask, then override ──
+    # -- code_int: treat undecided (-2) bits as 0 for bitmask, then override --
     b_clip = np.clip(binary, 0, 1)
     code_ints = (b_clip[:, 0] * 8 + b_clip[:, 1] * 4 +
                  b_clip[:, 2] * 2 + b_clip[:, 3] * 1).astype(int)
@@ -411,7 +412,7 @@ def build_dataframe(centers, radii, intensities, binary, bright_red,
     undecided_mask = np.any(binary == -2, axis=1)
     code_ints[undecided_mask] = -2
 
-    # ── per-droplet SNR (metric A) ────────────────────────────────────────────
+    # -- per-droplet SNR (metric A) -------------------------------------------
     snr = None
     if bg_means is not None and bg_stds is not None:
         snr = (intensities - bg_means) / (bg_stds + 1e-9)
@@ -465,7 +466,7 @@ def build_dataframe(centers, radii, intensities, binary, bright_red,
     return df
 
 
-# ── 6. RGB composite helper ─────────────────────────────────────────────────
+# -- 8. RGB composite helper ---------------------------------------------------
 
 HEX_COLORS = [
     "#ff2020", "#1d1b7d", "#086564", "#15a2ff",

@@ -36,6 +36,7 @@ DEFAULT_PARAMS = dict(
     bright_factor       = 2.0,   # bright-red GMM ratio threshold
     bright_pct          = 98.0,  # bright-red fallback percentile
     manual_thresholds   = None,  # [ch1, ch2, ch3, ch4] floats — overrides GMM if set
+    otsu_scale          = 1.0,   # multiply Otsu threshold (< 1 → lower threshold → more/larger detections)
 )
 
 
@@ -84,6 +85,7 @@ def process_image(filename, params=None):
             sigma_override   = p["sigma"],
             minsize_override = p["min_size"],
             mind_override    = p["min_dist"],
+            otsu_scale       = p.get("otsu_scale", 1.0),
         )
 
         if len(centers) == 0:
