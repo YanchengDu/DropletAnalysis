@@ -1,9 +1,8 @@
 @echo off
-:: ── Change to this .bat file's own directory (your data folder) ────────────
-cd /d "%~dp0"
-
-:: ── Central pipeline location — update if you move the pipeline folder ─────
-set CENTRAL=C:\Users\duyan\Documents\Postdoc\2026_Summer\16_NS_Experiment\Data_analysis
+:: ── Detect this .bat file's own directory (works from any location) ─────────
+set CENTRAL=%~dp0
+:: Remove trailing backslash
+if "%CENTRAL:~-1%"=="\" set CENTRAL=%CENTRAL:~0,-1%
 
 :: Make pipeline modules importable
 set PYTHONPATH=%CENTRAL%\pipeline;%PYTHONPATH%
