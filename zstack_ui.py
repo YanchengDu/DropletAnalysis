@@ -70,19 +70,45 @@ def launch_zstack_ui():
         {{ color: #cccccc !important; }}
     .{_uid} input::placeholder {{ color: #666666 !important; opacity: 1 !important; }}
     .{_uid} select option {{ background: #2a2a2a !important; color: #cccccc !important; }}
-    /* Tab styling */
-    .{_uid} .p-TabBar-tab {{ background: #2a2a2a !important; color: #aaa !important;
-                              border-color: #444 !important; }}
-    .{_uid} .p-TabBar-tab.p-mod-current {{ background: #1a1a1a !important;
-                                            color: #fff !important; }}
-    .{_uid} .p-TabPanel {{ background: #1a1a1a !important; border-color: #444 !important; }}
+    /* Tab styling — covers both legacy (p-) and modern (lm-/jp-) class names */
+    .{_uid} .p-TabBar,
+    .{_uid} .lm-TabBar,
+    .{_uid} .jupyter-widgets-tab-bar
+        {{ background: #1a1a1a !important; border-bottom: 1px solid #444 !important; }}
+    .{_uid} .p-TabBar-tab,
+    .{_uid} .lm-TabBar-tab,
+    .{_uid} .jupyter-widgets-tab-bar .p-TabBar-tab
+        {{ background: #2a2a2a !important; color: #aaa !important;
+           border-color: #444 !important; border-bottom: none !important; }}
+    .{_uid} .p-TabBar-tab.p-mod-current,
+    .{_uid} .lm-TabBar-tab.lm-mod-current,
+    .{_uid} .p-TabBar-tab[aria-selected="true"]
+        {{ background: #1a1a1a !important; color: #fff !important;
+           border-top: 2px solid #4a90d9 !important; }}
+    .{_uid} .p-TabPanel,
+    .{_uid} .lm-TabPanel,
+    .{_uid} .p-StackedPanel,
+    .{_uid} .lm-StackedPanel
+        {{ background: #1a1a1a !important; border: 1px solid #444 !important;
+           border-top: none !important; }}
+    .{_uid} .widget-tab-bar
+        {{ background: #1a1a1a !important; }}
+    .{_uid} .widget-tab-bar .widget-tab
+        {{ background: #2a2a2a !important; color: #aaa !important;
+           border: 1px solid #444 !important; border-bottom: none !important; }}
+    .{_uid} .widget-tab-bar .widget-tab.mod-active,
+    .{_uid} .widget-tab-bar .widget-tab[aria-selected="true"]
+        {{ background: #1a1a1a !important; color: #fff !important;
+           border-top: 2px solid #4a90d9 !important; }}
+    .{_uid} .widget-tab-contents
+        {{ background: #1a1a1a !important; border: 1px solid #444 !important; }}
     </style>
     """))
 
     S = {
         "df": None, "img_z": None, "filename": None,
         "pixel_size": 0.312, "z_spacing": 1.0,
-        "method": "optionc", "n_z": 0, "norm_range": None,
+        "method": "optione", "n_z": 0, "norm_range": None,
     }
 
     # ── File picker ───────────────────────────────────────────────────────────
@@ -135,11 +161,8 @@ def launch_zstack_ui():
         value=1.0, description="Z step:",
         style={"description_width": "45px"}, layout=widgets.Layout(width="120px"),
     )
-    method_dd = widgets.Dropdown(
-        options=[("Option C — MIP detect + axial profile (recommended)", "optionc"),
-                 ("Option A — Max Intensity Projection (2D)", "mip"),
-                 ("Option B — per-plane + cross-z NMS", "optionb")],
-        value="optionc", description="",
+    method_dd = widgets.HTML(
+        "<b style='font-size:0.8em;color:#aaa'>Method: Option E — per-plane detect + z-linking</b>",
         layout=widgets.Layout(width="280px"),
     )
 
@@ -175,26 +198,23 @@ def launch_zstack_ui():
                                  layout=widgets.Layout(padding="6px"))
 
     # Tab 2: 3D / Z
-    axthresh_sl = widgets.FloatSlider(value=0.5, min=0.1, max=0.9, step=0.05,
-                                       description="Axial threshold",
-                                       style={"description_width": "115px"},
-                                       layout=widgets.Layout(width="270px"))
-    axmeas_sl   = widgets.FloatSlider(value=0.8, min=0.3, max=1.0, step=0.05,
-                                       description="Axial meas frac",
-                                       style={"description_width": "115px"},
-                                       layout=widgets.Layout(width="270px"))
-    czo_sl  = widgets.FloatSlider(value=0.5, min=0.0, max=1.5, step=0.05,
-                                   description="Cross-z overlap",
-                                   style={"description_width": "115px"},
-                                   layout=widgets.Layout(width="270px"))
-    czp_sl  = widgets.IntSlider(  value=1,   min=1,   max=10,  step=1,
-                                   description="Min z-planes",
-                                   style={"description_width": "115px"},
-                                   layout=widgets.Layout(width="270px"))
-    optb_note = widgets.HTML(
-        "<i style='color:#888;font-size:0.85em'>Cross-z overlap and Min z-planes "
-        "only apply to Option B.</i>")
-    tab_3d = widgets.VBox([axthresh_sl, axmeas_sl, optb_note, czo_sl, czp_sl],
+    otsu_sl   = widgets.FloatSlider(value=0.85, min=0.3, max=1.5, step=0.05,
+                                     description="Otsu scale",
+                                     style={"description_width": "115px"},
+                                     layout=widgets.Layout(width="270px"))
+    nms_ov_sl = widgets.FloatSlider(value=0.0,  min=0.0, max=1.0, step=0.05,
+                                     description="NMS overlap",
+                                     style={"description_width": "115px"},
+                                     layout=widgets.Layout(width="270px"))
+    lkdist_sl = widgets.IntSlider(   value=10,  min=0,   max=40,  step=1,
+                                     description="Link max dist px",
+                                     style={"description_width": "115px"},
+                                     layout=widgets.Layout(width="270px"))
+    minzp_sl  = widgets.IntSlider(   value=2,   min=1,   max=10,  step=1,
+                                     description="Min z-planes",
+                                     style={"description_width": "115px"},
+                                     layout=widgets.Layout(width="270px"))
+    tab_3d = widgets.VBox([otsu_sl, nms_ov_sl, lkdist_sl, minzp_sl],
                            layout=widgets.Layout(padding="6px"))
 
     # Tab 3: Bright-red
@@ -213,7 +233,7 @@ def launch_zstack_ui():
     _ch_names = ["Ch1 red", "Ch2 yellow", "Ch3 cyan", "Ch4 blue"]
     thresh_sls = [
         widgets.FloatText(value=0.0, step=10.0, description=f"{_ch_names[c]}:",
-                          disabled=True,
+                          disabled=False,
                           style={"description_width": "80px"},
                           layout=widgets.Layout(width="200px"))
         for c in range(4)
@@ -279,7 +299,7 @@ def launch_zstack_ui():
     def _overlays_for_z(z_idx):
         df_cur = S.get("df")
         if df_cur is None: return [], [], []
-        method = S.get("method", "optionc")
+        method = S.get("method", "optione")
         shapes, scatters, annotations = [], [], []
         for _, row in df_cur.iterrows():
             ci    = int(row.code_int)
@@ -288,16 +308,15 @@ def launch_zstack_ui():
             col    = "#aaaaaa" if is_und else ("#ff2020" if is_br else HEX[ci % 16])
             cx, cy, r = row.centroid_x, row.centroid_y, row.radius
             # Determine visibility at this z-plane
-            if method in ("optionc", "optionb") and "z_best_plane" in row.index:
-                z_best = int(row.z_best_plane)
-                n_zp   = int(row.get("n_z_planes", 1))
-                z_lo   = z_best - n_zp // 2
-                z_hi   = z_best + (n_zp - n_zp // 2) - 1
+            # Option E: show condensate only in its z-range; solid at z_center
+            if "z_center_plane" in row.index:
+                z_lo    = int(row.get("z_min_plane", row.z_center_plane))
+                z_hi    = int(row.get("z_max_plane", row.z_center_plane))
                 if not (z_lo <= z_idx <= z_hi): continue
-                at_best  = (z_idx == z_best)
-                dash     = "dot" if is_und else ("solid" if at_best else "dash")
-                lw       = 2 if at_best else 1
-                opacity  = 1.0 if at_best else 0.3
+                at_best = (z_idx == int(row.z_center_plane))
+                dash    = "dot" if is_und else ("solid" if at_best else "dash")
+                lw      = 2 if at_best else 1
+                opacity = 1.0 if at_best else 0.35
             else:
                 at_best = True; dash = "dot" if is_und else "solid"
                 lw = 2; opacity = 1.0
@@ -415,7 +434,7 @@ def launch_zstack_ui():
         try:
             ps  = pxsz_box.value
             zsp = zstep_box.value
-            mth = method_dd.value
+            mth = "optione"
             S.update(filename=fname, pixel_size=ps, z_spacing=zsp, method=mth)
 
             img_z, zsp_auto = load_zstack(fname)
@@ -445,25 +464,39 @@ def launch_zstack_ui():
                 "snr_threshold":       snrth_sl.value,
                 "bright_factor":       brcomp_sl.value,
                 "bright_pct":          brpct_sl.value,
-                "cross_z_overlap":     czo_sl.value,
-                "min_z_planes":        czp_sl.value,
-                "axial_threshold_frac":axthresh_sl.value,
-                "axial_meas_frac":     axmeas_sl.value,
+
                 "min_circularity":     circ_sl.value,
                 "border_margin":       bmargin_sl.value,
+                # Option E
+                "otsu_scale":          otsu_sl.value,
+                "nms_overlap_e":       nms_ov_sl.value,
+                "link_max_dist_px":    lkdist_sl.value,
+                "min_z_planes_e":      minzp_sl.value,
+                "manual_thresholds":   None,
             }
             status_lbl.value = f"Running {mth} ..."
             df, meta = process_zstack(fname, params=params, method=mth)
             if df is None:
                 status_lbl.value = f"Failed: {meta.get('error', '?')}"; return
             S["df"] = df; S["meta"] = meta; S["params"] = params
-            for sl in thresh_sls: sl.disabled = False
+            # Populate threshold boxes with auto-computed values (user can override)
+            computed_threshs = meta.get("thresholds", [])
+            for c, sl in enumerate(thresh_sls):
+                if c < len(computed_threshs):
+                    sl.value = float(computed_threshs[c])
+            S["_computed_threshs"] = list(computed_threshs)
             S["_drawn_file"] = None
             draw_zplane(0)
             n_tot = meta["n_droplets"]; n_cls = meta["n_classes"]
             zinfo = (f"  z-planes: {meta.get('n_z_planes_total','?')}"
                      if "n_z_planes_total" in meta else "")
-            status_lbl.value = f"Done - {n_tot} droplets, {n_cls}/16 classes" + zinfo
+            raw   = meta.get("raw_detections", 0)
+            nact  = meta.get("diag_active_planes", "?")
+            nsup  = meta.get("diag_nms_suppressed", "?")
+            dinfo = (f"  [raw={raw} planes={nact} nms_sup={nsup}]"
+                     if meta.get("method") == "optione" else "")
+            status_lbl.value = (f"Done - {n_tot} droplets, {n_cls}/16 classes"
+                                + zinfo + dinfo)
         except Exception as e:
             import traceback; traceback.print_exc()
             status_lbl.value = f"Error: {e}"
@@ -472,7 +505,7 @@ def launch_zstack_ui():
         if S["df"] is None: status_lbl.value = "Run pipeline first."; return
         status_lbl.value = "Re-classifying ..."
         try:
-            man_thresh = [sl.value if not sl.disabled else None for sl in thresh_sls]
+            man_thresh = [float(sl.value) for sl in thresh_sls]
             params = dict(S.get("params") or {})
             params["manual_thresholds"]   = man_thresh
             params["thresh_offset_sigma"] = throff_sl.value
@@ -481,7 +514,7 @@ def launch_zstack_ui():
             params["snr_threshold"]       = snrth_sl.value
             params["bright_factor"]       = brcomp_sl.value
             params["bright_pct"]          = brpct_sl.value
-            df, meta = process_zstack(S["filename"], params=params, method=S["method"])
+            df, meta = process_zstack(S["filename"], params=params, method="optione")
             if df is None:
                 status_lbl.value = f"Failed: {meta.get('error', '?')}"; return
             S["df"] = df; S["meta"] = meta
@@ -509,47 +542,58 @@ def launch_zstack_ui():
                             f"+ {os.path.basename(params_out)}")
 
     def _save_image_cb(_):
-        df_cur = S["df"]; img_z = S["img_z"]
-        if df_cur is None or img_z is None:
-            status_lbl.value = "Run pipeline first."; return
-        import matplotlib.patches as _mp
-        n_z, n_ch, H, W = img_z.shape
-        mip = np.max(img_z, axis=0)
-        _ch_c = np.array([[1,0,0],[1,1,0],[0,1,1],[0,0,1]], dtype=float)
-        rgb   = np.zeros((H, W, 3), dtype=float)
-        rng   = S.get("norm_range")
-        ch_min, ch_max = rng if rng else (np.zeros(n_ch), np.ones(n_ch) * 65535)
-        for c in range(min(n_ch, 4)):
-            denom  = float(ch_max[c] - ch_min[c]) + 1e-9
-            norm_c = np.clip((mip[c].astype(float) - ch_min[c]) / denom, 0, 1)
-            rgb   += norm_c[:, :, np.newaxis] * _ch_c[c]
-        rgb_img = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
-        yy, xx  = np.mgrid[0:H, 0:W]
-        fig_s, ax_s = plt.subplots(figsize=(8, 8), dpi=150)
-        ax_s.imshow(rgb_img, origin="upper"); ax_s.set_xlim(0, W)
-        ax_s.set_ylim(H, 0); ax_s.axis("off")
-        for _, row in df_cur.iterrows():
-            ci   = int(row.code_int)
-            is_br = bool(row.get("bright_red", False))
-            col  = "#aaaaaa" if ci == -2 else ("#ff2020" if is_br else HEX[ci % 16])
-            cx, cy, r = row.centroid_x, row.centroid_y, row.radius
-            mask = (yy - cy)**2 + (xx - cx)**2 <= r**2
-            mean_br = rgb_img[mask].mean() / 255.0 if mask.any() else 0.0
-            tc = "black" if mean_br > 0.45 else "white"
-            ax_s.add_patch(_mp.Circle((cx, cy), r, fill=False, edgecolor=col,
-                                       linewidth=1.5, linestyle=":" if ci == -2 else "-"))
-            ax_s.text(cx, cy, "?" if ci == -2 else str(ci),
-                      ha="center", va="center", fontsize=7, color=tc, fontweight="bold")
-        base = os.path.splitext(S["filename"] or "output")[0]
-        out  = base + "_zstack_classified.png"
-        fig_s.savefig(out, bbox_inches="tight", pad_inches=0.02, dpi=150)
-        plt.close(fig_s)
-        status_lbl.value = f"Saved -> {os.path.basename(out)}"
+        try:
+            df_cur = S["df"]; img_z = S["img_z"]
+            if df_cur is None or img_z is None:
+                status_lbl.value = "Run pipeline first."; return
+            import matplotlib.patches as _mp
+            n_z, n_ch, H, W = img_z.shape
+            mip = np.max(img_z, axis=0)
+            _ch_c = np.array([[1,0,0],[1,1,0],[0,1,1],[0,0,1]], dtype=float)
+            rgb   = np.zeros((H, W, 3), dtype=float)
+            rng   = S.get("norm_range")
+            ch_min, ch_max = rng if rng else (np.zeros(n_ch), np.ones(n_ch) * 65535)
+            for c in range(min(n_ch, 4)):
+                denom  = float(ch_max[c] - ch_min[c]) + 1e-9
+                norm_c = np.clip((mip[c].astype(float) - ch_min[c]) / denom, 0, 1)
+                rgb   += norm_c[:, :, np.newaxis] * _ch_c[c]
+            rgb_img = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
+            yy, xx  = np.mgrid[0:H, 0:W]
+            fig_s, ax_s = plt.subplots(figsize=(8, 8), dpi=150)
+            ax_s.imshow(rgb_img, origin="upper"); ax_s.set_xlim(0, W)
+            ax_s.set_ylim(H, 0); ax_s.axis("off")
+            for _, row in df_cur.iterrows():
+                ci   = int(row.code_int)
+                is_br = bool(row.get("bright_red", False))
+                col  = "#aaaaaa" if ci == -2 else ("#ff2020" if is_br else HEX[ci % 16])
+                cx, cy, r = row.centroid_x, row.centroid_y, row.radius
+                mask = (yy - cy)**2 + (xx - cx)**2 <= r**2
+                mean_br = rgb_img[mask].mean() / 255.0 if mask.any() else 0.0
+                tc = "black" if mean_br > 0.45 else "white"
+                ax_s.add_patch(_mp.Circle((cx, cy), r, fill=False, edgecolor=col,
+                                           linewidth=1.5, linestyle=":" if ci == -2 else "-"))
+                ax_s.text(cx, cy, "?" if ci == -2 else str(ci),
+                          ha="center", va="center", fontsize=7, color=tc, fontweight="bold")
+            base = os.path.splitext(S["filename"] or "output")[0]
+            out  = base + "_zstack_classified.png"
+            fig_s.savefig(out, bbox_inches="tight", pad_inches=0.02, dpi=150)
+            plt.close(fig_s)
+            status_lbl.value = f"Saved -> {os.path.basename(out)}"
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            status_lbl.value = f"Save image error: {e}"
 
     def _save_analysis_cb(_):
         try:
             df_cur = S["df"]
             if df_cur is None: status_lbl.value = "Run pipeline first."; return
+            # Ensure volume_um3 column exists (show_analysis expects it)
+            df_cur = df_cur.copy()
+            if "volume_um3" not in df_cur.columns:
+                if "volume_3d_um3" in df_cur.columns:
+                    df_cur["volume_um3"] = df_cur["volume_3d_um3"]
+                else:
+                    df_cur["volume_um3"] = (4/3) * np.pi * (df_cur["radius_um"] ** 3)
             base   = os.path.splitext(S["filename"] or "output")[0]
             prefix = base + "_zstack_analysis"
             show_analysis(df_cur, pixel_size_um=S["pixel_size"], save_prefix=prefix)
@@ -692,7 +736,7 @@ def launch_zstack_ui():
         file_picker_widget,
         path_input,
         widgets.HBox([mag_dd, pxsz_box]),
-        widgets.HBox([method_dd]),
+        method_dd,
         widgets.HBox([zstep_box]),
         _sep(),
         param_tabs,
@@ -709,7 +753,7 @@ def launch_zstack_ui():
         widgets.HBox([del_id_box, del_btn],
                      layout=widgets.Layout(gap="4px", margin="4px 0")),
         _sep(),
-        _h("THRESHOLDS (override)"),
+        _h("CHANNEL THRESHOLDS (auto-filled; edit to override)"),
         *thresh_sls,
         _sep(),
         _h("OUTPUT"),
