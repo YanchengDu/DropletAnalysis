@@ -2,7 +2,7 @@
 :: ── Change to this .bat file's own directory (your data folder) ────────────
 cd /d "%~dp0"
 
-:: ── Central pipeline location — update if you move the pipeline folder ─────
+:: ── Central pipeline location — update this path if you move the pipeline ──
 set CENTRAL=C:\Users\duyan\Documents\Postdoc\2026_Summer\16_NS_Experiment\Data_analysis
 
 :: Make pipeline modules importable
@@ -12,10 +12,10 @@ echo Activating environment...
 call "%CENTRAL%\droplet_env\Scripts\activate.bat"
 
 echo.
-echo Starting Z-stack Analysis UI — opening in browser...
+echo Starting Batch Analysis — opening in browser...
 echo Close this window to stop the app.
 echo.
-voila "%CENTRAL%\notebooks\run_zstack.ipynb" --port=8867
+voila "%CENTRAL%\notebooks\run_batch.ipynb" --port=8868
 
 if errorlevel 1 (
     echo.

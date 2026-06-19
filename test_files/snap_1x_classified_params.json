@@ -1,0 +1,21 @@
+{
+  "source_file": "C:\\Users\\duyan\\Documents\\Postdoc\\2026_Summer\\16_NS_Experiment\\Data_analysis\\test_files\\snap_1x.czi",
+  "saved_at": "2026-06-18T21:06:13",
+  "pixel_size_um": 0.156,
+  "sigma": 2.0,
+  "min_size": 20,
+  "min_dist": 5,
+  "excl_factor": 2.0,
+  "reliability_sigma": 1.0,
+  "margin_sigma": 0.0,
+  "thresh_offset_sigma": 1.0,
+  "snr_threshold": 2.0,
+  "bright_factor": 2.0,
+  "bright_pct": 98.0,
+  "channel_thresholds": [
+    4262.422174272647,
+    707.6314118593502,
+    832.675708077203,
+    451.6575696011811
+  ]
+}

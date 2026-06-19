@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "droplet-analysis"
+version = "0.1.0"
+description = "DNA nanostar condensate droplet analysis pipeline"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-image",
+    "scikit-learn",
+    "plotly",
+    "ipywidgets",
+    "matplotlib",
+    "czifile",
+    "ipyfilechooser",
+    "voila",
+]
+
+[tool.setuptools]
+py-modules = ["droplet_pipeline", "droplet_ui", "batch_pipeline"]
