@@ -490,18 +490,206 @@ def show_analysis(df, pixel_size_um=0.312, img_shape=None, save_prefix=None):
     else:
         print("Need >=2 classes and >=4 droplets for distance analysis.")
 
+    # ── 6. System quality metrics ─────────────────────────────────────────────
+    # Category A — pipeline / imaging quality
+    #   Fraction undecided, fraction with ≥1 unreliable channel, mean classifier
+    #   confidence, and intra-class intensity CV (how consistent are raw
+    #   intensities within the same barcode class?).
+    # Category B — physical / experimental quality
+    #   Global radius CV (monodispersity), per-class radius CV, class coverage
+    #   (n_present / 16), and class composition entropy normalised to log₂16
+    #   (1.0 = all 16 classes equally abundant = ideal mixing).
+    n_total      = len(df)
+    n_any_unrel  = int((n_unrel > 0).sum())
+    n_mult_unrel = int((n_unrel > 1).sum())
+
+    # ── A: pipeline metrics ───────────────────────────────────────────────────
+    frac_undecided = n_undecided / n_total
+    frac_any_unrel = n_any_unrel / n_total
+
+    has_conf  = "confidence" in df.columns
+    mean_conf = float(df["confidence"].mean()) if has_conf else np.nan
+
+    # Intra-class intensity CV: σ/μ of raw intensity per class × channel
+    cv_mat = np.full((n_cls, 4), np.nan)
+    for ii, ci in enumerate(present):
+        sub = df[df.code_int == ci]
+        if len(sub) >= 2:
+            for jj, col in enumerate(ch_cols):
+                mu = sub[col].mean()
+                if mu > 0:
+                    cv_mat[ii, jj] = sub[col].std() / mu
+    mean_intensity_cv = float(np.nanmean(cv_mat)) if not np.all(np.isnan(cv_mat)) else np.nan
+
+    # ── B: experimental metrics ───────────────────────────────────────────────
+    r_mean    = df.radius_um.mean()
+    radius_cv = df.radius_um.std() / r_mean if r_mean > 0 else np.nan
+
+    per_cls_cv = {}
+    for ci in present:
+        sub = df[df.code_int == ci]
+        if len(sub) >= 2 and sub.radius_um.mean() > 0:
+            per_cls_cv[ci] = sub.radius_um.std() / sub.radius_um.mean()
+
+    # Class composition entropy vs. ideal uniform across all 16 classes.
+    # Normalise over classified droplets only (excludes undecided -2) so that
+    # the 16 probabilities sum to 1 and entropy_norm is independent of the
+    # undecided fraction (already captured by frac_undecided separately).
+    n_classified = int(counts.sum())
+    if n_classified > 0:
+        p_all = np.array([counts[c] / n_classified for c in range(16)], dtype=float)
+        h_raw = -np.sum(p_all * np.log2(np.where(p_all > 0, p_all, 1.0)))
+        entropy_norm = h_raw / np.log2(16)   # 1.0 = all 16 equally abundant
+    else:
+        entropy_norm = np.nan
+    class_coverage = len(present) / 16
+
+    # ── Figure Q1: scalar metric gauge bars ───────────────────────────────────
+    _gauge_rows = [
+        # (label, value, zones[(lo, hi, color)], hint)
+        ("Fraction undecided", frac_undecided,
+         [(0.00, 0.05, "#2ecc71"), (0.05, 0.15, "#f39c12"), (0.15, 1.0, "#e74c3c")],
+         "< 5% good"),
+        ("Fraction ≥1 unrel. channel", frac_any_unrel,
+         [(0.00, 0.10, "#2ecc71"), (0.10, 0.25, "#f39c12"), (0.25, 1.0, "#e74c3c")],
+         "< 10% good"),
+        ("Mean classifier confidence", mean_conf,
+         [(0.00, 0.60, "#e74c3c"), (0.60, 0.80, "#f39c12"), (0.80, 1.0, "#2ecc71")],
+         "> 0.8 good"),
+        ("Global radius CV  (σ/μ)", radius_cv,
+         [(0.00, 0.30, "#2ecc71"), (0.30, 0.50, "#f39c12"), (0.50, 1.0, "#e74c3c")],
+         "< 0.3 excellent"),
+        ("Class entropy  H / log₂16", entropy_norm,
+         [(0.00, 0.50, "#e74c3c"), (0.50, 0.75, "#f39c12"), (0.75, 1.0, "#2ecc71")],
+         "1.0 = all 16 equal"),
+        ("Class coverage  (n/16)", class_coverage,
+         [(0.00, 0.50, "#e74c3c"), (0.50, 0.75, "#f39c12"), (0.75, 1.0, "#2ecc71")],
+         "1.0 = all 16 present"),
+    ]
+    if not has_conf:
+        _gauge_rows = [r for r in _gauge_rows if "confidence" not in r[0].lower()]
+
+    n_g = len(_gauge_rows)
+    fig, ax = plt.subplots(figsize=(11, 0.75 * n_g + 1.2), dpi=150)
+    ax.set_xlim(0, 1.22)
+    ax.set_ylim(-0.7, n_g - 0.3)
+    ax.set_axis_off()
+    ax.set_title("System Quality Metrics", fontsize=12, fontweight="bold", pad=8)
+
+    BAR_LO, BAR_HI = 0.40, 0.90
+    BAR_W = BAR_HI - BAR_LO
+    BH    = 0.38
+
+    for row_i, (label, val, zones, desc) in enumerate(_gauge_rows):
+        y = n_g - 1 - row_i
+        for z_lo, z_hi, z_col in zones:
+            x0 = BAR_LO + z_lo * BAR_W
+            x1 = BAR_LO + z_hi * BAR_W
+            ax.barh(y, x1 - x0, left=x0, height=BH,
+                    color=z_col, alpha=0.20, edgecolor="none")
+        ax.barh(y, BAR_W, left=BAR_LO, height=BH,
+                color="none", edgecolor="#666", linewidth=0.8)
+        if not np.isnan(val):
+            val_c = float(np.clip(val, 0.0, 1.0))
+            x_val = BAR_LO + val_c * BAR_W
+            fill_col = "#888"
+            for z_lo, z_hi, z_col in zones:
+                if z_lo <= val_c < z_hi or (val_c == z_hi == 1.0):
+                    fill_col = z_col; break
+            ax.barh(y, x_val - BAR_LO, left=BAR_LO, height=BH,
+                    color=fill_col, alpha=0.75, edgecolor="none")
+            ax.plot([x_val, x_val], [y - BH / 2, y + BH / 2],
+                    color="black", lw=1.5)
+        ax.text(BAR_LO - 0.01, y, label, ha="right", va="center", fontsize=9)
+        val_str = f"{val:.3f}" if not np.isnan(val) else "N/A"
+        ax.text(BAR_HI + 0.012, y, val_str,
+                ha="left", va="center", fontsize=9, fontweight="bold")
+        ax.text(BAR_HI + 0.095, y, desc,
+                ha="left", va="center", fontsize=7, color="#666")
+
+    # dashed divider between category A and B rows
+    n_a = 3 if has_conf else 2
+    div_y = n_g - n_a - 0.5
+    ax.axhline(div_y, xmin=0.01, xmax=0.99,
+               color="#aaa", lw=0.8, linestyle="--")
+    ax.text(0.01, div_y + 0.15, "A — pipeline quality",
+            fontsize=7, color="#555", va="bottom")
+    ax.text(0.01, div_y - 0.15, "B — experimental quality",
+            fontsize=7, color="#555", va="top")
+
+    plt.tight_layout()
+    _maybe_save(fig)
+    plt.show()
+
+    # ── Figure Q2: intra-class raw intensity CV heatmap ───────────────────────
+    if not np.all(np.isnan(cv_mat)):
+        fig, ax = plt.subplots(
+            figsize=(6, max(3.0, n_cls * 0.45 + 1.2)), dpi=150)
+        im = ax.imshow(cv_mat, cmap="RdYlGn_r", vmin=0, vmax=0.8, aspect="auto")
+        ax.set_xticks(range(4))
+        ax.set_xticklabels(
+            ["ch1\n(red)", "ch2\n(yellow)", "ch3\n(cyan)", "ch4\n(blue)"])
+        ax.set_yticks(range(n_cls))
+        ax.set_yticklabels(labels, fontsize=8)
+        ax.set_ylabel("Class")
+        ax.set_title(
+            "Intra-class raw intensity CV  (σ/μ per class × channel)\n"
+            "green = consistent,  red = high within-class spread",
+            fontsize=10)
+        plt.colorbar(im, ax=ax, label="CV (σ/μ)", fraction=0.046, pad=0.04)
+        for i in range(n_cls):
+            for j in range(4):
+                v = cv_mat[i, j]
+                txt = f"{v:.2f}" if not np.isnan(v) else "—"
+                lum_v = 0.0 if np.isnan(v) else v / 0.8
+                ax.text(j, i, txt, ha="center", va="center", fontsize=7,
+                        color="white" if lum_v > 0.6 else "black")
+        plt.tight_layout()
+        _maybe_save(fig)
+        plt.show()
+
+    # ── Figure Q3: per-class radius CV bar chart ──────────────────────────────
+    if per_cls_cv:
+        cls_list = sorted(per_cls_cv.keys())
+        cv_vals  = [per_cls_cv[c] for c in cls_list]
+        fig, ax  = plt.subplots(
+            figsize=(max(6, len(cls_list) * 0.6 + 2), 3.5), dpi=150)
+        bars = ax.bar(range(len(cls_list)), cv_vals,
+                      color=[HEX_COLORS[c] for c in cls_list],
+                      edgecolor="#555", linewidth=0.6)
+        ax.axhline(0.30, color="#2ecc71", lw=1.0, linestyle="--",
+                   label="CV = 0.30  (excellent)")
+        ax.axhline(0.50, color="#e74c3c", lw=1.0, linestyle="--",
+                   label="CV = 0.50  (poor)")
+        for bar, val in zip(bars, cv_vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, val + 0.005,
+                    f"{val:.2f}", ha="center", va="bottom", fontsize=7)
+        ax.set_xticks(range(len(cls_list)))
+        ax.set_xticklabels([str(c) for c in cls_list], fontsize=9)
+        ax.set_xlabel("Class")
+        ax.set_ylabel("Radius CV  (σ/μ)")
+        ax.set_title("Per-class radius coefficient of variation")
+        ax.legend(fontsize=8, loc="upper right")
+        plt.tight_layout()
+        _maybe_save(fig)
+        plt.show()
 
     # ── Summary text ──────────────────────────────────────────────────────────
-    n_any_unrel  = (n_unrel > 0).sum()
-    n_mult_unrel = (n_unrel > 1).sum()
-    print(f"Total droplets : {len(df)}")
-    print(f"Undecided (−2) : {n_undecided}")
-    print(f"Classes found  : {len(present)}/16")
+    print(f"Total droplets : {n_total}")
+    print(f"Undecided (−2) : {n_undecided}  ({100*frac_undecided:.1f}%)")
+    print(f"Classes found  : {len(present)}/16  (coverage {100*class_coverage:.0f}%)")
     print(f"Bright red (0) : {df.bright_red.sum()}")
-    print(f"Radius         : {df.radius_um.mean():.2f} ± {df.radius_um.std():.2f} µm")
+    print(f"Radius         : {df.radius_um.mean():.2f} ± {df.radius_um.std():.2f} µm  "
+          f"(CV {radius_cv:.3f})")
     print(f"Volume         : {df.volume_um3.mean():.2f} ± {df.volume_um3.std():.2f} µm³")
-    print(f"Any unrel. ch  : {n_any_unrel} ({100*n_any_unrel/len(df):.1f}%)")
-    print(f">1 unrel. ch   : {n_mult_unrel} ({100*n_mult_unrel/len(df):.1f}%)")
+    print(f"Any unrel. ch  : {n_any_unrel} ({100*frac_any_unrel:.1f}%)")
+    print(f">1 unrel. ch   : {n_mult_unrel} ({100*n_mult_unrel/n_total:.1f}%)")
+    print(f"Class entropy  : {entropy_norm:.3f}  (H/log₂16;  1.0 = all 16 equal)")
+    if has_conf:
+        print(f"Mean confidence: {mean_conf:.3f}")
+    if not np.isnan(mean_intensity_cv):
+        print(f"Intensity CV   : {mean_intensity_cv:.3f}  "
+              f"(mean across classes × channels)")
     print()
     print("Counts per class:")
     for cls, cnt in counts[counts > 0].items():

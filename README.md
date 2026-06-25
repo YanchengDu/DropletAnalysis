@@ -29,6 +29,7 @@ Image analysis pipeline for fluorescence microscopy of **DNA nanostar condensate
   - [Classification](#classification-method)
   - [Aggregate Metrics (Analysis Plots)](#aggregate-metrics-analysis-plots)
   - [Pairwise Interaction Analysis](#pairwise-interaction-analysis)
+  - [System Quality Metrics](#system-quality-metrics)
 
 ---
 
@@ -502,6 +503,52 @@ BH-adjusted p-values: $\tilde{p}_{(k)} = \min\!\left(\frac{m}{k} p_{(k)},\, 1\ri
 Displayed as $-\log_{10}(\tilde{p}_{ij})$. Values above $-\log_{10}(0.05) \approx 1.3$ (dashed line on colorbar) pass FDR. Significant cells are annotated with `*`.
 
 **Why BH and not $z > 2$:** with 16 classes there are up to 240 off-diagonal pairs. At a nominal $\alpha = 0.05$ per-comparison threshold you expect $\sim 12$ false positives by chance alone. BH controls the *expected fraction* of false discoveries among all declared significant pairs — the correct criterion for publication-grade claims from a multi-class screen.
+
+---
+
+### System Quality Metrics
+
+`show_analysis()` computes a set of per-FOV quality indicators divided into two categories, displayed as gauge-bar dashboards and supplementary figures.
+
+#### Category A — Pipeline / Imaging Quality
+
+These metrics assess how reliably the detection and classification steps performed.
+
+**Fraction undecided** — proportion of detected droplets that could not be assigned a barcode class (code_int = −2). High values indicate low image SNR, poor channel separation, or sample degradation. Reference: < 5% good, > 15% concerning.
+
+**Fraction with ≥1 unreliable channel** — proportion of droplets where at least one channel was flagged as unreliable (SNR below threshold). Unreliable channels default to OFF (bit = 0), which may cause systematic misclassification. Reference: < 10% good.
+
+**Mean classifier confidence** — average posterior probability of the winning barcode call across all classified droplets. Near 1.0 means the GMM clearly separated ON and OFF populations; low values indicate ambiguous intensity distributions. Reference: > 0.8 good. (Requires `confidence` column in the output dataframe.)
+
+**Intra-class intensity CV** — for each (class, channel) pair, the coefficient of variation of raw fluorescence intensity:
+
+$$\text{CV}_{c,k} = \frac{\sigma_{c,k}}{\mu_{c,k}}$$
+
+where $\sigma_{c,k}$ and $\mu_{c,k}$ are the standard deviation and mean of raw channel-$k$ intensity across all droplets of class $c$. Low CV means droplets of the same barcode class have consistent brightness — as expected if the classification is accurate and the fluorescent labelling is uniform. High CV suggests within-class heterogeneity from mis-classification, photobleaching variation, or imaging artefacts. Displayed as a heatmap (classes × channels); the mean CV across all populated pairs is reported in the summary.
+
+#### Category B — Physical / Experimental Quality
+
+These metrics assess the quality of the condensate system itself.
+
+**Global radius CV** — coefficient of variation of droplet radius across all detected droplets:
+
+$$\text{CV}_r = \frac{\sigma_r}{\mu_r}$$
+
+Low CV indicates monodisperse condensates, consistent with well-controlled liquid–liquid phase separation. Reference: < 0.30 excellent, 0.30–0.50 moderate, > 0.50 poor.
+
+**Per-class radius CV** — same metric computed separately for each class. Allows identification of specific barcode compositions that produce unusually polydisperse condensates. Displayed as a bar chart with reference lines at CV = 0.30 and 0.50.
+
+**Class coverage** — fraction of the 16 possible barcode classes observed in the FOV:
+
+$$\text{coverage} = \frac{n_\text{present}}{16}$$
+
+A value of 1.0 means all 16 classes were detected. Low coverage indicates incomplete nanostar assembly or insufficient droplet count.
+
+**Class composition entropy** — Shannon entropy of the class distribution, normalised to the maximum entropy of a perfectly uniform 16-class mixture:
+
+$$H_\text{norm} = \frac{-\sum_{c=0}^{15} p_c \log_2 p_c}{\log_2 16}$$
+
+where $p_c = n_c / N_\text{classified}$ is the fraction of classified droplets belonging to class $c$ (undecided droplets are excluded from the denominator so that the 16 probabilities sum to 1). $H_\text{norm} = 1.0$ if and only if all 16 classes are equally abundant — the ideal outcome when equal amounts of all nanostar species are mixed. Dominant classes lower the entropy even if all 16 classes are nominally present, making this a sensitive indicator of stoichiometric imbalance in the sample preparation.
 
 ---
 
