@@ -38,6 +38,7 @@ Each CZI image contains droplets labelled with combinations of fluorescent dyes 
 5. **Classifies** each channel as ON/OFF per droplet using a Gaussian Mixture Model (GMM) threshold with optional offset and dead-zone.
 6. **Assigns a barcode class** (0–15) based on the 4-bit channel combination.
 7. **Reports** counts, volumes, SNR, confidence scores, and publication-quality plots.
+8. **Analyses pairwise interactions** between droplet classes via surface-to-surface distance matrices with analytical null model and Benjamini-Hochberg FDR correction.
 
 ---
 
@@ -325,8 +326,4 @@ Class  Code    Meaning
  15    1111    all four channels
 ```
 
-Channels flagged as unreliable (low SNR, marked ⚠ in the figure title) are excluded from the binary code — their bit defaults to 0, which may cause misclassification. Check the diagnostics panel when ⚠ appears.
-
----
-
-*Pipeline developed for DNA nanostar condensate fluorescence microscopy analysis.*
+Channels flagged as unreliable (low SNR, marked ⚠ in the figure title) are excluded from the binary code — their bit defaults to 0, w

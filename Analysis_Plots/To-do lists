@@ -1,0 +1,12 @@
+To-do lists:
+1. Calculate errors dependent on sample sizes for the co-occurence analysis, the fractions might be skewed if there are very few droplet of one class.
+   FULLY IMPLEMENTED (see also item 7): replaced co-occurrence fraction with pairwise surface-to-surface distance analysis. Three heatmaps produced in droplet_ui.py section 5:
+   - Heatmap A: raw mean surface-to-surface distance (um), class i -> nearest class j.
+   - Heatmap B: interaction z-score with attraction-emphasis colormap (vivid red = attraction, pale blue = avoidance). Null = mean/std of distances from ALL non-class-j droplets to nearest class-j. z_ij = (null_mean_j - obs_d_ij) / (null_std_j / sqrt(n_i)). Significance scales naturally with sqrt(n_i); no permutations needed.
+   - Heatmap C: BH FDR-corrected significance (-log10 of BH-adjusted one-tailed p-value, q=0.05). Cells passing FDR marked with *. Controls false discovery rate across all n_cls*(n_cls-1) off-diagonal pairs.
+   NOTE: z > 2 is NOT a rigorous 95% threshold due to: (1) CLT may not hold for small n_i; (2) multiple comparisons — use Heatmap C for publication claims.
+   Colormaps are asymmetric: attraction (positive z / ratio < 1) shown in vivid orange-to-crimson; avoidance compressed to pale blue to visually emphasise the phenomenon of interest.
+
+2. Discuss it with Claude, ask Claude to always make a plan and give a few options in discussions.
+3. Look in to prodcuts of Amcon filter to remove salt from purified nanostars, and look into the protocols for that.
+4. Doing experiments with standard desalting strands, and compare the results with PAGE purified and Layering purification, PAGE purification is supposed to solve the 

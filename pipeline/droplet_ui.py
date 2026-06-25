@@ -242,55 +242,139 @@ def show_analysis(df, pixel_size_um=0.312, img_shape=None, save_prefix=None):
     _maybe_save(fig)
     plt.show()
 
-    # ── 5. Nearest-neighbour co-occurrence ───────────────────────────────────
+    # ── 5. Pairwise surface-to-surface distance analysis (analytical null) ────
+    # For each class-i droplet, find the nearest class-j droplet and record the
+    # surface-to-surface distance (d_centre - r_i - r_j).
+    #
+    # Null model (no permutations needed): for each target class j, compute the
+    # same distance from ALL non-class-j droplets.  global_mean[j] and
+    # global_std[j] capture the baseline under random class assignment,
+    # accounting for class-j abundance and its spatial distribution.
+    #
+    # z_ij = (global_mean[j] - obs_d[i,j]) / (global_std[j] / sqrt(n_i))
+    # Positive z = class i is CLOSER to class j than the average droplet
+    #              = ATTRACTION.
+    # Significance naturally shrinks when n_i is small (sqrt(n_i) denominator),
+    # suppressing unreliable estimates without a hard threshold.
     coords  = df[["centroid_y", "centroid_x"]].values.astype(float)
     classes = df.code_int.values
+    radii   = df.radius_um.values
     n_cls   = len(present)
-    cls_to_i = {c: i for i, c in enumerate(present)}
-    labels   = [str(c) for c in present]
+    labels  = [str(c) for c in present]
 
-    if n_cls >= 2 and len(coords) >= 2:
-        # For every droplet, find nearest neighbour (k=2: skip self)
-        tree = KDTree(coords)
-        _, idxs = tree.query(coords, k=2)
-        nn_class = classes[idxs[:, 1]]   # class of each droplet's nearest neighbour
+    if n_cls >= 2 and len(coords) >= 4:
+        from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm, Normalize
 
-        # Raw co-occurrence count matrix: count_mat[i,j] = # droplets of class i
-        # whose nearest neighbour is class j
-        count_mat = np.zeros((n_cls, n_cls), dtype=float)
-        for src_cls, nn_cls in zip(classes, nn_class):
-            count_mat[cls_to_i[src_cls], cls_to_i[nn_cls]] += 1
+        # -- Build one KDTree per class ----------------------------------------
+        trees_j = {}
+        radii_j = {}
+        for jj, cj in enumerate(present):
+            m_j = (classes == cj)
+            if m_j.sum() > 0:
+                trees_j[jj] = KDTree(coords[m_j])
+                radii_j[jj] = radii[m_j]
 
-        # Fraction: normalise each row so it sums to 1
-        row_sums = count_mat.sum(axis=1, keepdims=True)
-        frac_mat = np.divide(count_mat, row_sums,
-                             out=np.zeros_like(count_mat), where=row_sums > 0)
+        # -- Observed mean distance matrix obs_d[i, j] ------------------------
+        # obs_d[i, j] = mean surface-to-surface distance from each class-i
+        # droplet to its nearest class-j droplet.
+        obs_d = np.full((n_cls, n_cls), np.nan)
+        for ii, ci in enumerate(present):
+            m_i = (classes == ci)
+            n_i = m_i.sum()
+            if n_i == 0:
+                continue
+            c_i = coords[m_i]
+            r_i = radii[m_i]
+            for jj in range(n_cls):
+                if jj not in trees_j:
+                    continue
+                same = (ii == jj)
+                if same and n_i < 2:
+                    continue
+                k = 2 if same else 1
+                d_c, nn = trees_j[jj].query(c_i, k=k)
+                if k == 1:
+                    d_s = d_c - r_i - radii_j[jj][nn]
+                else:
+                    d_s = d_c[:, 1] - r_i - radii_j[jj][nn[:, 1]]
+                obs_d[ii, jj] = d_s.mean()
 
-        # Enrichment: observed fraction / expected fraction (= class abundance)
-        expected = np.array([counts[c] for c in present], dtype=float)
-        expected /= expected.sum()
-        enrich_mat = np.divide(frac_mat, expected[np.newaxis, :],
-                               out=np.zeros_like(frac_mat), where=expected[np.newaxis, :] > 0)
+        # -- Analytical null: all non-class-j droplets to nearest class-j -----
+        # This sets the expected baseline for each target class j, accounting
+        # for both j's abundance and its spatial distribution in the FOV.
+        global_mean = np.full(n_cls, np.nan)
+        global_std  = np.full(n_cls, np.nan)
+        for jj, cj in enumerate(present):
+            if jj not in trees_j:
+                continue
+            mask_other = (classes != cj)
+            if mask_other.sum() < 2:
+                continue
+            c_o = coords[mask_other]
+            r_o = radii[mask_other]
+            d_c, nn = trees_j[jj].query(c_o, k=1)
+            d_s = d_c - r_o - radii_j[jj][nn]
+            global_mean[jj] = d_s.mean()
+            global_std[jj]  = d_s.std()
 
-        def _annotated_heatmap(mat, cmap, title, fmt, label, vmin=None, vmax=None):
-            sz = max(6, n_cls * 0.55)   # scale figure with number of classes
-            fig, ax = plt.subplots(figsize=(sz + 1.5, sz), dpi=150)
-            _vmin = vmin if vmin is not None else np.nanmin(mat)
-            _vmax = vmax if vmax is not None else np.nanmax(mat)
-            im = ax.imshow(mat, cmap=cmap, aspect="auto", vmin=_vmin, vmax=_vmax)
+        # -- Z-score and distance ratio ----------------------------------------
+        n_src  = np.array([counts[c] for c in present], dtype=float)
+        se_mat = global_std[np.newaxis, :] / np.sqrt(n_src[:, np.newaxis])
+        zscore_mat = np.divide(
+            global_mean[np.newaxis, :] - obs_d, se_mat,
+            out=np.full_like(obs_d, np.nan),
+            where=(se_mat > 0) & (~np.isnan(obs_d))
+        )
+        ratio_mat = np.divide(
+            obs_d, global_mean[np.newaxis, :],
+            out=np.full_like(obs_d, np.nan),
+            where=(~np.isnan(global_mean[np.newaxis, :])) & (global_mean[np.newaxis, :] > 0)
+        )
+        # Diagonal uses a different null (intra-class); suppress z/ratio there
+        np.fill_diagonal(zscore_mat, np.nan)
+        np.fill_diagonal(ratio_mat,  np.nan)
+
+        # -- Attraction-emphasis colormaps ------------------------------------
+        # Avoidance: pale steel blue  |  zero / ratio=1: white
+        # Attraction: pale orange -> vivid orange -> deep crimson  (eye-catching)
+        # The vivid warm colours draw the eye to attraction, which is what we
+        # care about; avoidance fades to a quiet pale blue.
+        _cmap_z = LinearSegmentedColormap.from_list(
+            '_attract',
+            [(0.00, '#9ecae1'),   # avoidance: pale blue
+             (0.38, '#deebf7'),   # mild avoidance: very pale blue
+             (0.50, '#ffffff'),   # zero: white
+             (0.64, '#fdd0a2'),   # mild attraction: pale orange
+             (0.80, '#f16913'),   # moderate: vivid orange
+             (0.91, '#cb181d'),   # strong: red
+             (1.00, '#67000d')]   # very strong: dark crimson
+        )
+        _cmap_r = _cmap_z.reversed()  # ratio < 1 = attraction = low value = red
+
+        # -- Annotated heatmap helper -----------------------------------------
+        row_labels = ["{0}  (n={1:d})".format(lbl, int(n))
+                      for lbl, n in zip(labels, n_src)]
+
+        def _annotated_heatmap(mat, cmap, norm, title, fmt, cb_label):
+            sz = max(6, n_cls * 0.55)
+            fig, ax = plt.subplots(figsize=(sz + 2.5, sz), dpi=150)
+            im = ax.imshow(mat, cmap=cmap, norm=norm, aspect="auto")
             ax.set_xticks(range(n_cls)); ax.set_xticklabels(labels, fontsize=9)
-            ax.set_yticks(range(n_cls)); ax.set_yticklabels(labels, fontsize=9)
-            ax.set_xlabel("Nearest-neighbour class", fontsize=10)
-            ax.set_ylabel("Source class", fontsize=10)
+            ax.set_yticks(range(n_cls)); ax.set_yticklabels(row_labels, fontsize=8)
+            ax.set_xlabel("Target class", fontsize=10)
+            ax.set_ylabel("Source class  (n = droplets in that class)", fontsize=10)
             ax.set_title(title, fontsize=11)
-            plt.colorbar(im, ax=ax, label=label, fraction=0.046, pad=0.04)
-            cmap_fn = plt.get_cmap(cmap)
+            plt.colorbar(im, ax=ax, label=cb_label, fraction=0.046, pad=0.04)
+            cmap_fn = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
             for i in range(n_cls):
                 for j in range(n_cls):
                     v = mat[i, j]
-                    t = np.clip((v - _vmin) / (_vmax - _vmin + 1e-12), 0, 1)
-                    r, g, b, _ = cmap_fn(t)
-                    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                    if np.isnan(v):
+                        ax.text(j, i, "-", ha="center", va="center",
+                                fontsize=8, color="gray")
+                        continue
+                    r2, g2, b2, _ = cmap_fn(norm(v))
+                    lum = 0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2
                     ax.text(j, i, fmt(v), ha="center", va="center",
                             fontsize=8,
                             color="white" if lum < 0.45 else "black")
@@ -298,21 +382,113 @@ def show_analysis(df, pixel_size_um=0.312, img_shape=None, save_prefix=None):
             plt.tight_layout()
             plt.show()
 
+        # Heatmap 1: raw mean surface-to-surface distance (um)
         _annotated_heatmap(
-            frac_mat, "Blues",
-            "NN co-occurrence fraction\nP(NN class = B | source class = A)",
-            lambda v: f"{v:.2f}", "fraction",
+            obs_d, "viridis_r",
+            Normalize(vmin=np.nanmin(obs_d), vmax=np.nanmax(obs_d)),
+            "Mean surface-to-surface distance: class i -> nearest class j  (um)\n"
+            "Diagonal = nearest same-class neighbour",
+            lambda v: "{0:.2f}".format(v), "distance (um)",
         )
 
-        e_max = max(2.0, np.nanpercentile(enrich_mat, 97))
+        # Heatmap 2: z-score with asymmetric norm (attraction gets full range,
+        # avoidance compressed to half) so vivid reds stand out visually
+        z_lim = max(2.0, np.nanpercentile(
+            np.abs(zscore_mat[~np.isnan(zscore_mat)]), 97))
+        norm_z = TwoSlopeNorm(vcenter=0.0, vmin=-z_lim * 0.5, vmax=z_lim)
         _annotated_heatmap(
-            enrich_mat, "RdBu_r",
-            "NN co-occurrence enrichment\nobserved / expected by class abundance",
-            lambda v: f"{v:.1f}", "enrichment",
-            vmin=0, vmax=e_max,
+            zscore_mat, _cmap_z, norm_z,
+            "Interaction z-score  |  red = ATTRACTION   blue = avoidance\n"
+            "null = all non-j droplets to nearest class j;  "
+            "significance scales with sqrt(n_i)",
+            lambda v: "{0:.1f}".format(v), "z-score",
         )
+
+        # Heatmap 3: Benjamini-Hochberg FDR-corrected significance
+        # One-tailed p-values for attraction: p_ij = P(Z > z_ij) = 1 - Phi(z_ij)
+        # Only off-diagonal pairs are tested (diagonal null is different).
+        # BH correction controls FDR at q=0.05 across all m off-diagonal pairs.
+        # Display as -log10(BH-adjusted p): higher = more significant.
+        # Cells with adj_p <= 0.05 are marked with * (FDR-significant attraction).
+        from scipy.stats import norm as _norm
+        FDR_Q = 0.05
+
+        # Compute one-tailed p-values (attraction direction only)
+        p_mat = np.full_like(zscore_mat, np.nan)
+        valid_mask = ~np.isnan(zscore_mat)
+        p_mat[valid_mask] = 1.0 - _norm.cdf(zscore_mat[valid_mask])
+
+        # Collect off-diagonal valid pairs
+        off_diag = valid_mask & ~np.eye(n_cls, dtype=bool)
+        ii_idx, jj_idx = np.where(off_diag)
+        p_vals = p_mat[ii_idx, jj_idx]
+        m = len(p_vals)
+
+        adj_p_mat = np.full_like(p_mat, np.nan)
+        if m > 0:
+            # BH step-up: sort, compute k/m * q threshold, take running min from right
+            sort_order = np.argsort(p_vals)
+            sorted_p   = p_vals[sort_order]
+            ranks      = np.arange(1, m + 1, dtype=float)
+            bh_adj     = np.clip(sorted_p * m / ranks, 0.0, 1.0)
+            # Enforce monotonicity (adjusted p cannot decrease as rank increases)
+            bh_adj     = np.minimum.accumulate(bh_adj[::-1])[::-1]
+            # Put back into matrix (unsorted)
+            adj_p_unsorted              = np.empty(m)
+            adj_p_unsorted[sort_order]  = bh_adj
+            adj_p_mat[ii_idx, jj_idx]   = adj_p_unsorted
+
+        # -log10 transform: 0 = no signal, >1.3 = adj_p < 0.05
+        logp_mat  = -np.log10(np.clip(adj_p_mat, 1e-10, 1.0))
+        sig_mask  = (adj_p_mat <= FDR_Q)   # cells to annotate with *
+
+        # Sequential colormap: white (not significant) -> vivid red (significant)
+        _cmap_bh = LinearSegmentedColormap.from_list(
+            '_bh',
+            [(0.00, '#ffffff'),   # p=1: white
+             (0.50, '#fdd0a2'),   # borderline: pale orange
+             (0.70, '#f16913'),   # moderate: vivid orange
+             (0.85, '#cb181d'),   # strong: red
+             (1.00, '#67000d')]   # very strong: dark crimson
+        )
+        lp_max = max(1.5, np.nanpercentile(logp_mat[~np.isnan(logp_mat)], 99))
+        norm_bh = Normalize(vmin=0, vmax=lp_max)
+
+        # Custom heatmap for BH (annotates significant cells with *)
+        sz = max(6, n_cls * 0.55)
+        fig, ax = plt.subplots(figsize=(sz + 2.5, sz), dpi=150)
+        im = ax.imshow(logp_mat, cmap=_cmap_bh, norm=norm_bh, aspect="auto")
+        ax.set_xticks(range(n_cls)); ax.set_xticklabels(labels, fontsize=9)
+        ax.set_yticks(range(n_cls)); ax.set_yticklabels(row_labels, fontsize=8)
+        ax.set_xlabel("Target class", fontsize=10)
+        ax.set_ylabel("Source class  (n = droplets in that class)", fontsize=10)
+        ax.set_title(
+            "Attraction significance  (-log10 BH-adjusted p,  FDR q=0.05)\n"
+            "* = FDR-significant attraction;  one-tailed test (attraction only)",
+            fontsize=11)
+        cb = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cb.set_label("-log10(BH adj. p)")
+        cb.ax.axhline(-np.log10(FDR_Q), color='black', lw=1.2, linestyle='--')
+        cb.ax.text(2.6, -np.log10(FDR_Q), "q=0.05", va='center', fontsize=7)
+        for i in range(n_cls):
+            for j in range(n_cls):
+                v = logp_mat[i, j]
+                if np.isnan(v):
+                    ax.text(j, i, "-", ha="center", va="center",
+                            fontsize=8, color="gray")
+                    continue
+                r2, g2, b2, _ = _cmap_bh(norm_bh(v))
+                lum = 0.2126 * r2 + 0.7152 * g2 + 0.0722 * b2
+                txt_col = "white" if lum < 0.45 else "black"
+                label_txt = "* {0:.2f}".format(v) if sig_mask[i, j] else "{0:.2f}".format(v)
+                ax.text(j, i, label_txt, ha="center", va="center",
+                        fontsize=7, color=txt_col,
+                        fontweight="bold" if sig_mask[i, j] else "normal")
+        _maybe_save(fig)
+        plt.tight_layout()
+        plt.show()
     else:
-        print("Need ≥2 classes for co-occurrence analysis.")
+        print("Need >=2 classes and >=4 droplets for distance analysis.")
 
 
     # ── Summary text ──────────────────────────────────────────────────────────
@@ -1193,90 +1369,4 @@ def launch_ui():
         S["df"] = df_cur[df_cur.label != did].reset_index(drop=True)
         draw_droplets()
         status_lbl.value = f"Deleted ID {did}"
-    del_btn.on_click(_delete_cb)
-
-    # ── Layout ────────────────────────────────────────────────
-    def _h(t):
-        return widgets.HTML(
-            f"<b style='font-size:0.78em;letter-spacing:0.05em;"
-            f"color:#888'>{t}</b>"
-        )
-    def _sep():
-        return widgets.HTML("<hr style='margin:3px 0'>")
-
-    _tab_pad = widgets.Layout(padding="6px")
-    tab_detect   = widgets.VBox([sigma_sl, otsu_sl, minsize_sl, mind_sl],
-                                 layout=_tab_pad)
-    tab_classify = widgets.VBox([excl_sl, relth_sl, margin_sl, snrth_sl, throff_sl],
-                                 layout=_tab_pad)
-    tab_bright   = widgets.VBox([brcomp_sl, brpct_sl],
-                                 layout=_tab_pad)
-    param_tabs = widgets.Tab(children=[tab_detect, tab_classify, tab_bright])
-    for _i, _t in enumerate(["Detect", "Classify", "Bright-red"]):
-        param_tabs.set_title(_i, _t)
-
-    left_col = widgets.VBox([
-        file_picker_widget,
-        path_input,
-        widgets.HBox([mag_dd, pxsz_box]),
-        _sep(),
-        param_tabs,
-        _sep(),
-        widgets.HBox([run_btn, reclf_btn, save_btn],
-                     layout=widgets.Layout(gap="4px")),
-    ], layout=widgets.Layout(width="300px", padding="8px"))
-
-    right_col = widgets.VBox([
-        _h("EDIT DROPLETS"),
-        _sep(),
-        _h("Update class"),
-        widgets.HBox([sel_id_box, class_input, upd_btn],
-                     layout=widgets.Layout(gap="4px")),
-        _sep(),
-        _h("Merge"),
-        widgets.HBox([merge_box, merge_btn, merge_clr_btn], layout=widgets.Layout(gap="4px")),
-        _sep(),
-        _h("Add new  (y, x, r, cls)"),
-        widgets.HBox([ay, ax], layout=widgets.Layout(gap="3px")),
-        widgets.HBox([ar, ac, add_btn], layout=widgets.Layout(gap="3px")),
-        _sep(),
-        _h("Delete"),
-        widgets.HBox([del_id_box, del_btn], layout=widgets.Layout(gap="4px")),
-        _sep(),
-        _h("CHANNEL THRESHOLDS (auto; edit to override)"),
-        *thresh_sls,
-        widgets.HBox([diag_btn, simg_btn], layout=widgets.Layout(gap="4px", margin="4px 0")),
-        sana_btn,
-    ], layout=widgets.Layout(
-        width="240px", padding="8px",
-        border_left="1px solid #444",
-    ))
-
-    ctrl_panel = widgets.HBox(
-        [left_col, right_col],
-        layout=widgets.Layout(border="1px solid #444", max_height="645px",
-                              overflow_y="auto"),
-    )
-    ctrl_panel.add_class(_uid)
-
-    status_row = widgets.HBox(
-        [status_lbl],
-        layout=widgets.Layout(padding="3px 8px", border="1px solid #444",
-                              border_top="none"),
-    )
-    status_row.add_class(_uid)
-    # ── throff live-update: update thresh_sls whenever offset slider moves ──
-    def _throff_changed(change):
-        gmm_th = S.get("gmm_thresholds")
-        bgs_   = S.get("bg_stds")
-        if gmm_th is not None and bgs_ is not None:
-            effective = gmm_th + change["new"] * bgs_
-            for c, sl in enumerate(thresh_sls):
-                sl.value = float(effective[c])
-    throff_sl.observe(_throff_changed, names="value")
-
-    outer = widgets.HBox([fig, widgets.VBox([ctrl_panel, status_row])])
-    _outer_ref[0] = outer   # allow draw_droplets to swap the figure widget
-    display(outer)
-    display(diag_out)   # diagnostics plot appears below main UI, doesn't affect layout
-    return S
+    d
