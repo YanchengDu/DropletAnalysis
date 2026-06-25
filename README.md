@@ -24,6 +24,11 @@ Image analysis pipeline for fluorescence microscopy of **DNA nanostar condensate
 - [Run vs Re-classify](#when-to-use--run-vs--re-classify)
 - [Saving Results](#saving-results)
 - [Barcode Classes](#barcode-classes)
+- [Analysis Methods](#analysis-methods)
+  - [Detection](#detection-method)
+  - [Classification](#classification-method)
+  - [Aggregate Metrics (Analysis Plots)](#aggregate-metrics-analysis-plots)
+  - [Pairwise Interaction Analysis](#pairwise-interaction-analysis)
 
 ---
 
@@ -326,4 +331,178 @@ Class  Code    Meaning
  15    1111    all four channels
 ```
 
-Channels flagged as unreliable (low SNR, marked ⚠ in the figure title) are excluded from the binary code — their bit defaults to 0, w
+Channels flagged as unreliable (low SNR, marked ⚠ in the figure title) are excluded from the binary code — their bit defaults to 0, which may cause misclassification. Check the diagnostics panel when ⚠ appears.
+
+---
+
+## Analysis Methods
+
+This section documents the mathematical and statistical methods used throughout the pipeline, from raw image to interaction significance.
+
+---
+
+### Detection Method
+
+Droplets are detected using a multi-channel union strategy followed by circle-level non-maximum suppression (NMS).
+
+**Per-channel thresholding:** each channel is Gaussian-blurred (σ, default 1.0 px) and binarised at `otsu_scale × Otsu_threshold`. Connected components below `min_area` px² are discarded.
+
+**Peak finding:** the union of all per-channel binary masks is distance-transformed. Local maxima of the distance transform separated by at least `min_dist` px become candidate droplet centres. Each centre's radius is estimated from the distance transform value at that peak.
+
+**Circle NMS:** among overlapping detections, the one with the higher distance-transform peak is kept. Post-NMS, radii are converted to physical units (µm) using the pixel size.
+
+---
+
+### Classification Method
+
+Each detected droplet is classified into one of 16 barcode classes (0–15) based on the ON/OFF state of four fluorescent channels.
+
+#### Two-pass intensity measurement
+
+**Pass 1 (full radius):** mean intensity is measured over the full circle area for each channel. These intensities feed a two-component Gaussian Mixture Model (GMM) fitted independently per channel across all droplets in the image.
+
+**Pass 2 (shrunk core, 65% radius):** intensities are re-measured from the inner core only, avoiding the boundary region where fluorescence from adjacent droplets bleeds in. Core intensities are used for the final 0/1 decision.
+
+#### Background estimation
+
+Background mean (`bg_mean`) and standard deviation (`bg_std`) are estimated from pixels outside all droplet exclusion zones (radius `BG excl × r`). Background characterises the noise floor for each channel independently.
+
+#### GMM threshold and reliability
+
+The GMM places a decision boundary between the dim and bright populations. The effective threshold is:
+
+```
+threshold = GMM_boundary + Thr_offset_σ × bg_std
+```
+
+A channel is flagged **unreliable** (reported as −1) if its bright-population mean is below `Reliability_σ × bg_std`, indicating insufficient signal above noise to classify reliably.
+
+#### Confidence score
+
+Each droplet's `min_confidence` is the minimum across channels of the GMM posterior distance from the decision boundary, normalised to [0, 1]. Only droplets with `min_confidence > 0.05` are saved to CSV and used in downstream analysis.
+
+#### Barcode assignment
+
+The 4-bit binary code from (ch1, ch2, ch3, ch4) ON/OFF states maps directly to an integer class 0–15. Class 0 is overridden for droplets where the brightest GMM component mean exceeds `Bright_red_× × dim_component_mean` in the red channel.
+
+#### SNR
+
+Per-droplet, per-channel signal-to-noise ratio:
+
+```
+SNR = (core_intensity − bg_mean) / bg_std
+```
+
+Droplets with any channel below `SNR_threshold` are excluded.
+
+---
+
+### Aggregate Metrics (Analysis Plots)
+
+The scripts in `Analysis_Plots/scripts/` compute five metrics across experimental conditions. All metrics filter on `min_confidence > 0.05` and pool 20× and 40× FOVs after normalising by physical FOV area.
+
+#### Metric A — Class composition
+
+Fraction of all droplets belonging to each class:
+
+```
+frac[c] = count(class c) / count(all droplets)
+```
+
+Captures the relative abundance of each barcode in a given condition.
+
+#### Metric B — Mean radius
+
+Mean ± std of `radius_um` per class per condition. Larger radius indicates larger condensate volume. Intra-class radius variability reflects polydispersity.
+
+#### Metric C — Mean volume
+
+Mean ± std of `volume_um3 = (4/3)π r³` per class per condition, plotted on a log scale because volumes span orders of magnitude across classes.
+
+#### Metric D — Volume fraction
+
+Fraction of total condensate volume occupied by each class:
+
+```
+vol_frac[c] = Σ volume_um3(class c) / Σ volume_um3(all)
+```
+
+A rare class with large droplets can have a disproportionately large volume fraction relative to its count fraction (Metric A).
+
+#### Metric E — Droplet density
+
+Number of droplets per unit imaged area (µm²), per class, per FOV:
+
+```
+density[c] = count(class c in FOV) / FOV_area_um2
+```
+
+Each FOV is normalised by its own physical area before pooling across magnifications, so 20× and 40× contribute equally.
+
+**Reliability flagging:** classes with fewer than `MIN_N = 10` droplets in a condition are flagged with `*` (bar charts) or an open circle (error-bar plots) in all figures.
+
+---
+
+### Pairwise Interaction Analysis
+
+Produced by `show_analysis()` in `pipeline/droplet_ui.py` (section 5). Quantifies whether pairs of droplet classes are spatially closer than expected by chance, using surface-to-surface distances to remove size bias.
+
+#### Surface-to-surface distance
+
+For droplets $k$ (class $i$) and $l$ (class $j$) with centres $x_k$, $x_l$ and radii $r_k$, $r_l$:
+
+$$d^\text{surf}_{kl} = \|x_k - x_l\|_2 - r_k - r_l$$
+
+A value ≤ 0 means the droplets are in contact or overlapping. This removes the bias where larger droplets appear as nearest neighbours simply because they occupy more space.
+
+#### Heatmap A — Mean surface-to-surface distance (µm)
+
+For each source class $i$ and target class $j$, the observed mean distance is:
+
+$$\bar{d}_{ij} = \frac{1}{n_i} \sum_{k \in \text{class } i} \min_{l \in \text{class } j} d^\text{surf}_{kl}$$
+
+where $n_i$ is the number of class-$i$ droplets. The diagonal ($i = j$) gives the mean nearest same-class neighbour distance (computed with $k \neq l$).
+
+#### Heatmap B — Interaction z-score
+
+**Null model:** for each target class $j$, compute the nearest class-$j$ distance from all non-class-$j$ droplets:
+
+$$D_j = \left\{ \min_{l \in \text{class } j} d^\text{surf}_{kl} \;\middle|\; k \notin \text{class } j \right\}$$
+
+This encodes class $j$'s abundance, size distribution, and spatial arrangement in the FOV — without permutations. The null mean $\mu_j = \text{mean}(D_j)$ and standard deviation $\sigma_j = \text{std}(D_j)$ are computed from the $N - n_j$ distances.
+
+**Z-score:** the mean distance $\bar{d}_{ij}$ is a sample mean of $n_i$ independent observations, so its standard error under the null is $\sigma_j / \sqrt{n_i}$:
+
+$$z_{ij} = \frac{\mu_j - \bar{d}_{ij}}{\sigma_j / \sqrt{n_i}}$$
+
+- **Positive $z$ (vivid red) = attraction:** class $i$ is closer to class $j$ than a random droplet would be.
+- **Negative $z$ (pale blue) = avoidance.**
+- Significance scales with $\sqrt{n_i}$: rare classes produce small $|z|$ automatically, suppressing unreliable estimates without a hard count threshold.
+
+**Colormap design:** asymmetric `TwoSlopeNorm` compresses the avoidance colour range to 50% of the attraction range, so vivid crimson-to-orange highlights the interactions of interest while avoidance fades to pale blue.
+
+**Diagonal:** the same-class null ($D_j$ excludes class-$j$ droplets) does not apply to the diagonal, so $z_{ii}$ is set to NaN.
+
+#### Heatmap C — Benjamini-Hochberg FDR-corrected significance
+
+**One-tailed p-values:** for attraction only ($z > 0$ direction):
+
+$$p_{ij} = 1 - \Phi(z_{ij})$$
+
+computed for all $m = n_\text{cls} \times (n_\text{cls} - 1)$ off-diagonal pairs.
+
+**BH step-up procedure** at FDR $q = 0.05$:
+
+1. Sort p-values: $p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(m)}$.
+2. Find the largest rank $k$ such that $p_{(k)} \leq \frac{k}{m} \cdot q$.
+3. Declare all pairs with rank $\leq k$ as FDR-significant.
+
+BH-adjusted p-values: $\tilde{p}_{(k)} = \min\!\left(\frac{m}{k} p_{(k)},\, 1\right)$, taking the running minimum from the largest rank to enforce monotonicity.
+
+Displayed as $-\log_{10}(\tilde{p}_{ij})$. Values above $-\log_{10}(0.05) \approx 1.3$ (dashed line on colorbar) pass FDR. Significant cells are annotated with `*`.
+
+**Why BH and not $z > 2$:** with 16 classes there are up to 240 off-diagonal pairs. At a nominal $\alpha = 0.05$ per-comparison threshold you expect $\sim 12$ false positives by chance alone. BH controls the *expected fraction* of false discoveries among all declared significant pairs — the correct criterion for publication-grade claims from a multi-class screen.
+
+---
+
+*Pipeline developed for DNA nanostar condensate fluorescence microscopy analysis.*

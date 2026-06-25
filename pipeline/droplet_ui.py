@@ -1369,4 +1369,90 @@ def launch_ui():
         S["df"] = df_cur[df_cur.label != did].reset_index(drop=True)
         draw_droplets()
         status_lbl.value = f"Deleted ID {did}"
-    d
+    del_btn.on_click(_delete_cb)
+
+    # ── Layout ────────────────────────────────────────────────
+    def _h(t):
+        return widgets.HTML(
+            f"<b style='font-size:0.78em;letter-spacing:0.05em;"
+            f"color:#888'>{t}</b>"
+        )
+    def _sep():
+        return widgets.HTML("<hr style='margin:3px 0'>")
+
+    _tab_pad = widgets.Layout(padding="6px")
+    tab_detect   = widgets.VBox([sigma_sl, otsu_sl, minsize_sl, mind_sl],
+                                 layout=_tab_pad)
+    tab_classify = widgets.VBox([excl_sl, relth_sl, margin_sl, snrth_sl, throff_sl],
+                                 layout=_tab_pad)
+    tab_bright   = widgets.VBox([brcomp_sl, brpct_sl],
+                                 layout=_tab_pad)
+    param_tabs = widgets.Tab(children=[tab_detect, tab_classify, tab_bright])
+    for _i, _t in enumerate(["Detect", "Classify", "Bright-red"]):
+        param_tabs.set_title(_i, _t)
+
+    left_col = widgets.VBox([
+        file_picker_widget,
+        path_input,
+        widgets.HBox([mag_dd, pxsz_box]),
+        _sep(),
+        param_tabs,
+        _sep(),
+        widgets.HBox([run_btn, reclf_btn, save_btn],
+                     layout=widgets.Layout(gap="4px")),
+    ], layout=widgets.Layout(width="300px", padding="8px"))
+
+    right_col = widgets.VBox([
+        _h("EDIT DROPLETS"),
+        _sep(),
+        _h("Update class"),
+        widgets.HBox([sel_id_box, class_input, upd_btn],
+                     layout=widgets.Layout(gap="4px")),
+        _sep(),
+        _h("Merge"),
+        widgets.HBox([merge_box, merge_btn, merge_clr_btn], layout=widgets.Layout(gap="4px")),
+        _sep(),
+        _h("Add new  (y, x, r, cls)"),
+        widgets.HBox([ay, ax], layout=widgets.Layout(gap="3px")),
+        widgets.HBox([ar, ac, add_btn], layout=widgets.Layout(gap="3px")),
+        _sep(),
+        _h("Delete"),
+        widgets.HBox([del_id_box, del_btn], layout=widgets.Layout(gap="4px")),
+        _sep(),
+        _h("CHANNEL THRESHOLDS (auto; edit to override)"),
+        *thresh_sls,
+        widgets.HBox([diag_btn, simg_btn], layout=widgets.Layout(gap="4px", margin="4px 0")),
+        sana_btn,
+    ], layout=widgets.Layout(
+        width="240px", padding="8px",
+        border_left="1px solid #444",
+    ))
+
+    ctrl_panel = widgets.HBox(
+        [left_col, right_col],
+        layout=widgets.Layout(border="1px solid #444", max_height="645px",
+                              overflow_y="auto"),
+    )
+    ctrl_panel.add_class(_uid)
+
+    status_row = widgets.HBox(
+        [status_lbl],
+        layout=widgets.Layout(padding="3px 8px", border="1px solid #444",
+                              border_top="none"),
+    )
+    status_row.add_class(_uid)
+    # ── throff live-update: update thresh_sls whenever offset slider moves ──
+    def _throff_changed(change):
+        gmm_th = S.get("gmm_thresholds")
+        bgs_   = S.get("bg_stds")
+        if gmm_th is not None and bgs_ is not None:
+            effective = gmm_th + change["new"] * bgs_
+            for c, sl in enumerate(thresh_sls):
+                sl.value = float(effective[c])
+    throff_sl.observe(_throff_changed, names="value")
+
+    outer = widgets.HBox([fig, widgets.VBox([ctrl_panel, status_row])])
+    _outer_ref[0] = outer   # allow draw_droplets to swap the figure widget
+    display(outer)
+    display(diag_out)   # diagnostics plot appears below main UI, doesn't affect layout
+    return S
